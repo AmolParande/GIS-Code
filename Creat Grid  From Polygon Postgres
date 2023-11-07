@@ -1,0 +1,97 @@
+import geopandas as gpd
+import psycopg2
+import geohash2
+from shapely.geometry import Polygon, box
+
+
+# PostgreSQL database connection parameters
+db_params = {
+    'dbname': 'ggg',
+    'user': 'ggg_ro',
+    'password': 'Br0wW5g6PjohQu@',
+    'host': '10.137.173.46',
+    'port': '5432'
+}
+
+# SQL query to retrieve the input polygon
+sql_query = """
+SELECT osm_id as aa8_osm_id, name as index_searched_query, ST_SetSRID(way, 4326) as geo
+FROM "ade_wrl_23430_000_eur_fra".planet_osm_polygon
+WHERE boundary = 'administrative' AND admin_level = '8' AND name = 'Paris'
+"""
+
+# Connect to the PostgreSQL database
+conn = psycopg2.connect(**db_params)
+
+# Execute the SQL query and load the result into a GeoPandas DataFrame
+gdf = gpd.GeoDataFrame.from_postgis(sql_query, conn, geom_col='geo')
+
+# Get the bounding box for the GeoDataFrame
+bbox = gdf.bounds
+
+# Calculate GeoHash for the bounding box
+min_lat, min_lon, max_lat, max_lon = bbox.miny.iloc[0], bbox.minx.iloc[0], bbox.maxy.iloc[0], bbox.maxx.iloc[0]
+geohash_tiles = geohash2.encode(min_lat, min_lon, precision=5)  # Adjust the precision as needed
+
+# Create a GeoDataFrame with the bounding box geometry
+geohash_gdf = gpd.GeoDataFrame(
+    {'GeoHash': [geohash_tiles]},
+    geometry=[Polygon([
+        (bbox.minx.iloc[0], bbox.miny.iloc[0]),
+        (bbox.minx.iloc[0], bbox.maxy.iloc[0]),
+        (bbox.maxx.iloc[0], bbox.maxy.iloc[0]),
+        (bbox.maxx.iloc[0], bbox.miny.iloc[0]),
+        (bbox.minx.iloc[0], bbox.miny.iloc[0]),
+    ])]
+)
+
+# Set the GeoDataFrame's coordinate reference system (CRS)
+geohash_gdf.crs = gdf.crs
+
+# Print the GeoDataFrame with GeoHash geometries
+print(geohash_gdf)
+
+# geohash_gdf.to_file("/Users/parande/Documents/7_AddessRanges/GeoHashinTesting/YYYYgeohash_gdf.shp")
+
+
+# Define the number of rows and columns for the grid
+num_rows = 2
+num_cols = 2
+
+# Calculate the width and height of each grid cell
+bbox = geohash_gdf.total_bounds
+cell_width = (bbox[2] - bbox[0]) / num_cols
+cell_height = (bbox[3] - bbox[1]) / num_rows
+
+# Create a list to store the unique cell identifiers
+cell_ids = []
+
+# Iterate over rows and columns to create grid cells and assign unique IDs
+for row in range(num_rows):
+    for col in range(num_cols):
+        # Calculate cell boundaries
+        min_x = bbox[0] + col * cell_width
+        max_x = bbox[0] + (col + 1) * cell_width
+        min_y = bbox[1] + row * cell_height
+        max_y = bbox[1] + (row + 1) * cell_height
+
+        # Create a grid cell geometry
+        cell_geometry = box(min_x, min_y, max_x, max_y)
+
+        # Assign a unique ID to the cell
+        cell_id = f"Cell_{row}_{col}"
+
+        # Append the cell and its ID to the list
+        cell_ids.append((cell_id, cell_geometry))
+
+# Create a GeoDataFrame for the grid cells
+grid_gdf = gpd.GeoDataFrame(cell_ids, columns=['Cell_ID', 'geometry'])
+
+# Set the GeoDataFrame's coordinate reference system (CRS)
+grid_gdf.crs = geohash_gdf.crs
+
+# Print the GeoDataFrame with grid cells and IDs
+print(grid_gdf)
+
+# Save the GeoDataFrame as a shapefile
+grid_gdf.to_file("/Users/parande/Documents/7_AddessRanges/GeoHashinTesting/2grid_cells.shp")
